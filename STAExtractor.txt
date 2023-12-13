@@ -1,0 +1,101 @@
+when RULE_INIT {
+    set static::inactivity 900
+    set static::capture 0
+}
+ 
+when CLIENTSSL_HANDSHAKE {
+    SSL::collect
+}
+ 
+when CLIENTSSL_DATA {
+    set data [SSL::payload]
+    if { ($data contains "\x3b\x53\x54\x41") } {
+        regexp -line {;([\d\w;]*)} $data -> ticket
+        set existing_sid [table lookup $ticket]
+        if { $existing_sid == "" } {
+            set conn [connect "sta-resolver-vs"]
+            send $conn "GET /f5apm/ctx-sta?$ticket HTTP/1.0\r\nHost: APM\r\n\r\n"
+            set receved_data [recv $conn]
+            regexp {Set-Cookie: MRHSession=(.*);path=/} $receved_data dummy mrhcookie
+            if { [info exists mrhcookie] } {
+                #log local0. "New orphan session created id $mrhcookie"
+                ACCESS::session modify -sid $mrhcookie -timeout $static::inactivity
+            }
+            close $conn
+        }
+    }
+    SSL::release
+    SSL::collect
+}
+ 
+when ACCESS_POLICY_COMPLETED {
+    set static::inactivity [ACCESS::session data get session.inactivity_timeout]
+}
+ 
+when HTTP_REQUEST {
+    if {([HTTP::uri] contains "GetDetectionTicket")} {
+        if { [ACCESS::session sid] != "" && [ACCESS::session exists -state_allow] } {
+            set static::capture 1
+        }
+    } elseif {([HTTP::uri] contains "GetLaunchStatus")} {
+        if { [ACCESS::session sid] != "" && [ACCESS::session exists -state_allow] } {
+            set static::capture 1
+        }
+    } elseif {([HTTP::uri] contains "cgi/logout")} {
+        if { [ACCESS::session sid] != "" && [ACCESS::session exists -state_allow] } {
+            HTTP::redirect "/vdesk/hangup.php3"
+        }
+    }
+}
+ 
+when HTTP_RESPONSE {
+    if { ($static::capture == 1) } {
+        if {[HTTP::header "Content-Length"] ne "" && [HTTP::status] == 200}{
+        set content_length [HTTP::header "Content-Length"]
+        } else {   
+            set content_length 1048576
+        }
+        # Check if $content_length is not set to 0
+        if { $content_length > 0} {
+        HTTP::collect $content_length
+        } else {
+            set static::capture 0
+        }
+    }
+}
+when HTTP_RESPONSE_DATA {
+  if { $static::capture == 1 } {
+    set response_payload [HTTP::payload]
+    set index 0
+    if { [HTTP::payload] contains "clientDetectionStaTicket" } {
+        set index [string first "clientDetectionStaTicket" [HTTP::payload]]
+        set index [expr $index + [string length "clientDetectionStaTicket"]]
+    } elseif { [HTTP::payload] contains "fileFetchStaTicket" } {
+        set index [string first "fileFetchStaTicket" [HTTP::payload]]
+        set index [expr $index + [string length "fileFetchStaTicket"]]
+    }
+    if {$index != 0 } {
+        set index [expr $index + 4]
+        set ticket [string range [HTTP::payload] $index [expr $index + 45]]
+        set conn [connect "sta-resolver-vs"]
+        send $conn "GET /f5apm/ctx-sta?$ticket HTTP/1.0\r\nHost: APM\r\n\r\n"
+        set receved_data [recv $conn]
+        regexp {Set-Cookie: MRHSession=(.*);path=/} $receved_data dummy mrhcookie
+        if { [info exists mrhcookie] } {
+            #log local0. "New session created id $mrhcookie"
+            ACCESS::session modify -sid $mrhcookie -timeout 60 -lifetime 60
+            table set $ticket $mrhcookie 60
+        }
+        close $conn
+    }
+    set static::capture 0
+    HTTP::release
+  }
+}
+ 
+when CLIENT_CLOSED {
+    if { [info exists mrhcookie] && [ACCESS::session exists $mrhcookie]} {
+        ACCESS::session modify -sid $mrhcookie -timeout 1
+        #log local0. "Closed session id $mrhcookie"
+    }
+}
