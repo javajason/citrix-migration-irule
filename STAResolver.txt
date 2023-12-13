@@ -1,0 +1,123 @@
+when RULE_INIT {
+    set static::debug_sta_rslv 0
+    set static::sta_servers "https://rpc-xdc4.rpc.apm.wrw-lab.f5net.com/scripts/ctxsta.dll"
+}
+ 
+when HTTP_REQUEST {
+    if { [HTTP::has_responded] } {
+        if { $static::debug_sta_rslv } { log local0. "HTTP::has_responded" }
+        return
+        } else {
+           if { $static::debug_sta_rslv } { log local0. "HTTP::has NOT responded" }
+        }
+    set sta_request [expr {[HTTP::path] == "/f5apm/ctx-sta"}]
+    if { $static::debug_sta_rslv } { log local0. "req is [HTTP::uri]" }
+    if { $static::debug_sta_rslv } { log local0. "sta req is $sta_request" }
+    
+    if {!$sta_request} {
+        # exit event if the request was not a STA request
+       if { $static::debug_sta_rslv } { log local0. "sta_request does NOT exist, exit event" }
+        return
+        } else {
+        if { $static::debug_sta_rslv } { log local0. "sta_request does exist, continue" }
+        }
+    
+    sharedvar internal_ica_file_request
+    if { [info exists internal_ica_file_request] } {
+        if { $static::debug_sta_rslv } { log local0. "internal_ica_file_request exists...return 200 ok to SF APM with mod ICA info" }
+        after 5
+        HTTP::respond 200 content \
+            "\[ApplicationServers\]\nApp=\n\[App\]\nAddress=;[HTTP::query]" \
+            "Content-Type" "application/x-ica"
+        if { $static::debug_sta_rslv } { log local0. "unset internal_ica_file_request and exit event" }
+        unset internal_ica_file_request
+        return
+    }
+    else {
+        if { $static::debug_sta_rslv } { log local0. "internal_ica_file_request does NOT exist, continue" }
+    }
+ 
+    if { [info exists sta_request_sid] } {
+        if { $static::debug_sta_rslv } { log local0. "sta_request_sid is $sta_request_sid" }
+        if { $static::debug_sta_rslv } { log local0. "insert MRHSession cookie = $sta_request_sid and X-F5-Client header" }
+        HTTP::header insert \
+            "Cookie" "MRHSession=$sta_request_sid" \
+            "X-F5-Client" "citrix-launch"
+        VDI::enable
+        if { $static::debug_sta_rslv } { log local0. "enable VDI" }
+ 
+        set internal_ica_file_request 1
+        if { $static::debug_sta_rslv } { log local0. "internal_ica_file_request set to 1" }
+        SSL::disable serverside
+        if { $static::debug_sta_rslv } { log local0. "disable SSL serverside" }
+        virtual [virtual name]
+        if { $static::debug_sta_rslv } { log local0. "go back to same VS" }
+ 
+    } else {
+        if { $static::debug_sta_rslv } { log local0. "sta_request_sid does NOT exist" }
+        HTTP::header insert "clientless-mode" "1"
+        if { $static::debug_sta_rslv } { log local0. "insert clientless-mode header" }
+    }
+}
+ 
+when HTTP_RESPONSE {
+    if { [HTTP::payload] contains "Address=;" } {
+        if { $static::debug_sta_rslv } { log local0. "Response payload contains Address=; which denotes an ICA File" }
+ 
+        set sta_address [HTTP::payload]
+        regexp -line {^(?:[^;]*;){2}([^;]*)} $sta_address -> sta1
+        regexp -line {^(?:[^;]*;){4}([^;]*)} $sta_address -> sta2
+        if { ![info exists sta1] } {
+            return
+        }
+        ACCESS::session data set session.citrix.sta_servers $static::sta_servers
+    } else {
+        if { $static::debug_sta_rslv } { log local0. "not an ICA" }
+    }
+}
+ 
+when HTTP_RESPONSE_RELEASE {
+    if { [HTTP::has_responded] } {
+        if { $static::debug_sta_rslv } { log local0. "HTTP has_responded...exit event" }
+        return
+    }
+ 
+    if {!$sta_request} {
+        if { $static::debug_sta_rslv } { log local0. "sta_request does NOT exist...exit event" }
+        return
+        }
+ 
+    if { [HTTP::status] == 200 } {
+        if { $static::debug_sta_rslv } { log local0. "HTTP status is 200, remove Set-Cookie header" }
+        # There is no need to expose this SID
+        #HTTP::header remove Set-Cookie
+    } else {
+        if { $static::debug_sta_rslv } { log local0. " HTTP status is NOT 200, remove access session" }
+        # Remove session on failed STA resolution
+        ACCESS::session remove
+    }
+}
+ 
+when ACCESS_SESSION_STARTED {
+    if { !$sta_request } {
+        if { $static::debug_sta_rslv } { log local0. "sta_request does NOT exist...exit event" }
+        return
+        } else {
+            if { $static::debug_sta_rslv } { log local0. "sta_request exists...continue" }
+        }
+ 
+    if { $static::debug_sta_rslv } { log local0. "sta_request exists so set 'session.external_sta_ticket' to 1" }
+    ACCESS::session data set "session.external_sta_ticket" "1"
+}
+ 
+when ACCESS_POLICY_COMPLETED {
+    if { !$sta_request } {
+        if { $static::debug_sta_rslv } { log local0. "sta_request does NOT exist...exit event" }
+        return
+    } else {
+            if { $static::debug_sta_rslv } { log local0. "sta_request exists...continue" }
+        }
+ 
+    set sta_request_sid [ACCESS::session sid]
+    if { $static::debug_sta_rslv } { log local0. "sta_request_sid is $sta_request_sid" }
+}
