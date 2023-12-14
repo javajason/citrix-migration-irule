@@ -96,7 +96,7 @@ when HTTP_RESPONSE_DATA {
 when CLIENT_CLOSED {
     if { [info exists mrhcookie] && [ACCESS::session exists $mrhcookie]} {
         ACCESS::session modify -sid $mrhcookie -timeout 1
-        #log local0. "Closed session id $mrhcookie"
+        log local0. "Closed session id $mrhcookie"
     }
 }
 
