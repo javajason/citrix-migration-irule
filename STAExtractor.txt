@@ -6,7 +6,7 @@ when RULE_INIT {
 when CLIENTSSL_HANDSHAKE {
     SSL::collect
 }
- 
+
 when CLIENTSSL_DATA {
     set data [SSL::payload]
     if { ($data contains "\x3b\x53\x54\x41") } {
@@ -44,6 +44,12 @@ when HTTP_REQUEST {
     } elseif {([HTTP::uri] contains "GetLaunchStatus")} {
         if { [ACCESS::session sid] != "" && [ACCESS::session exists -state_allow] } {
             set static::capture 1
+            set sessionSID [ACCESS::session sid]
+            set cookie [HTTP::header "Cookie"]
+            if { $sessionSID != "" && $cookie != "" } {
+                table set $sessionSID $cookie 60
+                #log local0. "===PRATHAP===========Stored cookie for===$sessionSID =========="
+            }
         }
     } elseif {([HTTP::uri] contains "cgi/logout")} {
         if { [ACCESS::session sid] != "" && [ACCESS::session exists -state_allow] } {
