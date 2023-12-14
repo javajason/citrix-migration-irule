@@ -18,8 +18,11 @@ when CLIENTSSL_DATA {
             set receved_data [recv $conn]
             regexp {Set-Cookie: MRHSession=(.*);path=/} $receved_data dummy mrhcookie
             if { [info exists mrhcookie] } {
-                #log local0. "New orphan session created id $mrhcookie"
+                log local0. "New orphan session created id $mrhcookie"
                 ACCESS::session modify -sid $mrhcookie -timeout $static::inactivity
+                if { [info exists uName] } {
+                 ACCESS::session set -sid $mrhcookie session.logon.last.username $uName
+                }
             }
             close $conn
         }
@@ -30,6 +33,7 @@ when CLIENTSSL_DATA {
  
 when ACCESS_POLICY_COMPLETED {
     set static::inactivity [ACCESS::session data get session.inactivity_timeout]
+    set uName [ACCESS::session data get session.logon.last.username]
 }
  
 when HTTP_REQUEST {
