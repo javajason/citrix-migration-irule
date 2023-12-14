@@ -1,0 +1,56 @@
+when FLOW_INIT {
+    set static::icaticket ""
+}
+
+when HTTP_REQUEST {
+    if { ([HTTP::uri] contains "getIcaFile") || ([HTTP::uri] contains "reportDetectionStatus")} {
+        if {[HTTP::header "Content-Length"] <= 1048576 && [HTTP::header "Content-Length"] > 0} {
+           set content_length [HTTP::header "Content-Length"]
+           if { $content_length > 0 } {
+               HTTP::collect $content_length
+           }
+       }
+    }
+}
+
+when HTTP_REQUEST_DATA {
+   #log local0. "========[HTTP::payload]=============="
+   if { [HTTP::payload] contains "ticket=" } {
+        set index [string first "ticket=" [HTTP::payload]]
+        set index [expr $index + [string length "ticket="]]
+        set static::icaticket [string range [HTTP::payload] $index [expr $index + 67]]
+        set extracted_sid [table lookup $static::icaticket]
+        
+        set stored_cookie [table lookup $extracted_sid]
+        HTTP::header insert "Cookie" $stored_cookie
+        #log local0. "=========Inserted===$static::icaticket     $extracted_sid==========="
+   }
+   HTTP::release
+}
+ 
+when SERVERSSL_HANDSHAKE {
+ 
+   # Trigger collection of the decrypted payload once the SSL handshake has been completed successfully
+   SSL::collect
+}
+when SERVERSSL_DATA {
+   # Do something with the decrypted data
+   set data [SSL::payload]
+   #log local0. "============$data==================="
+   if { ($static::icaticket != "") && ($data contains ";STA") } {
+        set index [string first ";STA" $data]
+        set index [expr $index - 2]
+        set ticket [string range $data $index [expr $index + 45]]
+        set extracted_sid [table lookup $static::icaticket]
+        if { $extracted_sid != "" } {
+            table set $ticket $extracted_sid 30
+        }
+    }
+    # Release the payload
+    SSL::release
+    SSL::collect
+}
+
+when LB_SELECTED {
+    log local0. "===========[LB::server addr]=========[LB::server port] ============"
+}
