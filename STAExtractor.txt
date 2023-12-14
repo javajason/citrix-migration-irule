@@ -99,3 +99,10 @@ when CLIENT_CLOSED {
         #log local0. "Closed session id $mrhcookie"
     }
 }
+
+when LB_SELECTED {
+    if { [LB::server addr] == "10.192.205.57" && [LB::server port] == 443 } {
+        log local0. "TEST [LB::server addr] [LB::server port]"
+        LB::reselect pool "citrix_int_rpc_webui_https_pool" member "10.192.205.57:443"
+    }
+}
